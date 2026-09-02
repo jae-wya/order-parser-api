@@ -1,17 +1,15 @@
 """
-Portfolio chatbot endpoint.
-
-Drop this into the existing order-parser-api service and mount it:
-
-    from chat import router as chat_router
-    app.include_router(chat_router)
+Portfolio chatbot endpoint — Gemini free tier.
 
 Requires in requirements.txt:
-    anthropic
+    google-generativeai
     slowapi
 
-Requires on Railway:
-    ANTHROPIC_API_KEY
+Requires environment variable on Render:
+    GEMINI_API_KEY
+
+Get a free key at: aistudio.google.com/app/apikey
+No credit card required.
 
 Place system_prompt.md next to this file.
 """
@@ -20,21 +18,27 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from anthropic import Anthropic
+import google.generativeai as genai
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-MODEL = "claude-haiku-4-5"
+MODEL = "gemini-1.5-flash"   # free tier, fast, 1M tokens/day
 MAX_TOKENS = 500
-MAX_MESSAGES = 40          # 20 turns
+MAX_MESSAGES = 40             # 20 turns
 MAX_CHARS_PER_MESSAGE = 2000
 
 SYSTEM_PROMPT = (Path(__file__).parent / "system_prompt.md").read_text(encoding="utf-8")
 
-client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+model = genai.GenerativeModel(
+    model_name=MODEL,
+    system_instruction=SYSTEM_PROMPT,
+    generation_config=genai.GenerationConfig(max_output_tokens=MAX_TOKENS),
+)
+
 limiter = Limiter(key_func=get_remote_address)
 router = APIRouter()
 
@@ -58,32 +62,35 @@ class ChatRequest(BaseModel):
         return messages
 
 
+def _to_gemini_history(messages: list[Message]) -> tuple[list[dict], str]:
+    """Split messages into history (all but last) and the current user turn."""
+    history = []
+    for m in messages[:-1]:
+        # Gemini uses "model" instead of "assistant"
+        role = "model" if m.role == "assistant" else "user"
+        history.append({"role": role, "parts": [m.content]})
+    return history, messages[-1].content
+
+
 @router.post("/chat")
 @limiter.limit("15/minute;100/hour")
 async def chat(request: Request, body: ChatRequest) -> StreamingResponse:
     """Stream a reply as Server-Sent Events."""
 
+    history, user_message = _to_gemini_history(body.messages)
+
     def generate():
         try:
-            with client.messages.stream(
-                model=MODEL,
-                max_tokens=MAX_TOKENS,
-                # cache_control makes repeat reads of the system prompt ~10% of
-                # input price, which is most of the token spend here.
-                system=[
-                    {
-                        "type": "text",
-                        "text": SYSTEM_PROMPT,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
-                messages=[m.model_dump() for m in body.messages],
-            ) as stream:
-                for chunk in stream.text_stream:
-                    yield f"data: {chunk}\n\n"
+            session = model.start_chat(history=history)
+            response = session.send_message(user_message, stream=True)
+            for chunk in response:
+                text = chunk.text
+                if text:
+                    # Escape newlines so SSE frames stay intact
+                    safe = text.replace("\n", "\\n")
+                    yield f"data: {safe}\n\n"
             yield "data: [DONE]\n\n"
         except Exception:
-            # Never leak internals to the browser.
             yield "data: [ERROR]\n\n"
 
     return StreamingResponse(
