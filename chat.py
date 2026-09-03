@@ -1,43 +1,34 @@
 """
-Portfolio chatbot endpoint — Gemini free tier.
+Portfolio chatbot endpoint — Gemini free tier (google-genai SDK).
 
 Requires in requirements.txt:
-    google-generativeai
+    google-genai
     slowapi
 
 Requires environment variable on Render:
     GEMINI_API_KEY
-
-Get a free key at: aistudio.google.com/app/apikey
-No credit card required.
-
-Place system_prompt.md next to this file.
 """
 
 import os
 from pathlib import Path
 from typing import Literal
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-MODEL = "gemini-1.5-flash"   # free tier, fast, 1M tokens/day
+MODEL = "gemini-1.5-flash"
 MAX_TOKENS = 500
-MAX_MESSAGES = 40             # 20 turns
+MAX_MESSAGES = 40
 MAX_CHARS_PER_MESSAGE = 2000
 
 SYSTEM_PROMPT = (Path(__file__).parent / "system_prompt.md").read_text(encoding="utf-8")
 
-genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-model = genai.GenerativeModel(
-    model_name=MODEL,
-    system_instruction=SYSTEM_PROMPT,
-    generation_config=genai.GenerationConfig(max_output_tokens=MAX_TOKENS),
-)
+client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 limiter = Limiter(key_func=get_remote_address)
 router = APIRouter()
@@ -62,14 +53,12 @@ class ChatRequest(BaseModel):
         return messages
 
 
-def _to_gemini_history(messages: list[Message]) -> tuple[list[dict], str]:
-    """Split messages into history (all but last) and the current user turn."""
-    history = []
-    for m in messages[:-1]:
-        # Gemini uses "model" instead of "assistant"
+def _to_genai_contents(messages: list[Message]) -> list[types.Content]:
+    contents = []
+    for m in messages:
         role = "model" if m.role == "assistant" else "user"
-        history.append({"role": role, "parts": [m.content]})
-    return history, messages[-1].content
+        contents.append(types.Content(role=role, parts=[types.Part(text=m.content)]))
+    return contents
 
 
 @router.post("/chat")
@@ -77,20 +66,25 @@ def _to_gemini_history(messages: list[Message]) -> tuple[list[dict], str]:
 async def chat(request: Request, body: ChatRequest) -> StreamingResponse:
     """Stream a reply as Server-Sent Events."""
 
-    history, user_message = _to_gemini_history(body.messages)
+    contents = _to_genai_contents(body.messages)
 
     def generate():
         try:
-            session = model.start_chat(history=history)
-            response = session.send_message(user_message, stream=True)
+            response = client.models.generate_content_stream(
+                model=MODEL,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    max_output_tokens=MAX_TOKENS,
+                ),
+            )
             for chunk in response:
                 text = chunk.text
                 if text:
-                    # Escape newlines so SSE frames stay intact
                     safe = text.replace("\n", "\\n")
                     yield f"data: {safe}\n\n"
             yield "data: [DONE]\n\n"
-        except Exception:
+        except Exception as e:
             yield "data: [ERROR]\n\n"
 
     return StreamingResponse(
