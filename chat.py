@@ -3,8 +3,11 @@ Portfolio chatbot — Kiwi — Gemini free tier.
 """
 
 import os
+import warnings
 from pathlib import Path
 from typing import Literal
+
+warnings.filterwarnings("ignore")
 
 from google import genai
 from google.genai import types
@@ -62,22 +65,23 @@ async def chat(request: Request, body: ChatRequest) -> StreamingResponse:
 
     def generate():
         try:
-            response = client.models.generate_content_stream(
-                model=MODEL,
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
-                    max_output_tokens=MAX_TOKENS,
-                ),
-            )
-            for chunk in response:
-                if chunk.text:
-                    # escape newlines so SSE frames stay intact
-                    safe = chunk.text.replace("\n", "\\n")
-                    yield f"data: {safe}\n\n"
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                response = client.models.generate_content_stream(
+                    model=MODEL,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_PROMPT,
+                        max_output_tokens=MAX_TOKENS,
+                    ),
+                )
+                for chunk in response:
+                    if chunk.text:
+                        safe = chunk.text.replace("\n", "\\n")
+                        yield f"data: {safe}\n\n"
             yield "data: [DONE]\n\n"
-        except Exception as e:
-            yield f"data: [ERROR]\n\n"
+        except Exception:
+            yield "data: [ERROR]\n\n"
 
     return StreamingResponse(
         generate(),
