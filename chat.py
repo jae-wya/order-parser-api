@@ -1,12 +1,5 @@
 """
-Portfolio chatbot endpoint — Gemini free tier (google-genai SDK).
-
-Requires in requirements.txt:
-    google-genai
-    slowapi
-
-Requires environment variable on Render:
-    GEMINI_API_KEY
+Portfolio chatbot — Kiwi — Gemini free tier.
 """
 
 import os
@@ -64,7 +57,6 @@ def _to_genai_contents(messages: list[Message]) -> list[types.Content]:
 @router.post("/chat")
 @limiter.limit("15/minute;100/hour")
 async def chat(request: Request, body: ChatRequest) -> StreamingResponse:
-    """Stream a reply as Server-Sent Events."""
 
     contents = _to_genai_contents(body.messages)
 
@@ -79,13 +71,13 @@ async def chat(request: Request, body: ChatRequest) -> StreamingResponse:
                 ),
             )
             for chunk in response:
-                text = chunk.text
-                if text:
-                    safe = text.replace("\n", "\\n")
+                if chunk.text:
+                    # escape newlines so SSE frames stay intact
+                    safe = chunk.text.replace("\n", "\\n")
                     yield f"data: {safe}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:
-            yield "data: [ERROR]\n\n"
+            yield f"data: [ERROR]\n\n"
 
     return StreamingResponse(
         generate(),
