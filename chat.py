@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-MODEL = "gemini-1.5-flash"
+MODEL = "gemini-2.0-flash"
 MAX_TOKENS = 500
 MAX_MESSAGES = 40
 MAX_CHARS_PER_MESSAGE = 2000
