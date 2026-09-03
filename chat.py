@@ -61,15 +61,21 @@ def _to_genai_contents(messages: list[Message]) -> list[types.Content]:
 @limiter.limit("15/minute;100/hour")
 async def chat(request: Request, body: ChatRequest):
     contents = _to_genai_contents(body.messages)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                max_output_tokens=MAX_TOKENS,
-            ),
-        )
-    text = response.text or ""
-    return JSONResponse({"text": text})
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            response = client.models.generate_content(
+                model=MODEL,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    max_output_tokens=MAX_TOKENS,
+                ),
+            )
+        text = response.text or ""
+        return JSONResponse({"text": text})
+    except Exception as e:
+        msg = str(e)
+        if "503" in msg or "UNAVAILABLE" in msg:
+            return JSONResponse({"text": "I'm having trouble reaching my brain right now — Google's servers are busy. Try again in a moment."}, status_code=200)
+        return JSONResponse({"text": "Something went wrong on my end. Try again."}, status_code=200)
