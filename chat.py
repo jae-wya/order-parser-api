@@ -1,18 +1,18 @@
 """
-Portfolio chatbot — Kiwi — Gemini free tier.
+Portfolio chatbot — Kiwi — Gemini free tier. Non-streaming.
 """
 
 import os
 import warnings
+warnings.filterwarnings("ignore")
+
 from pathlib import Path
 from typing import Literal
-
-warnings.filterwarnings("ignore")
 
 from google import genai
 from google.genai import types
 from fastapi import APIRouter, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -59,32 +59,17 @@ def _to_genai_contents(messages: list[Message]) -> list[types.Content]:
 
 @router.post("/chat")
 @limiter.limit("15/minute;100/hour")
-async def chat(request: Request, body: ChatRequest) -> StreamingResponse:
-
+async def chat(request: Request, body: ChatRequest):
     contents = _to_genai_contents(body.messages)
-
-    def generate():
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                response = client.models.generate_content_stream(
-                    model=MODEL,
-                    contents=contents,
-                    config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_PROMPT,
-                        max_output_tokens=MAX_TOKENS,
-                    ),
-                )
-                for chunk in response:
-                    if chunk.text:
-                        safe = chunk.text.replace("\n", "\\n")
-                        yield f"data: {safe}\n\n"
-            yield "data: [DONE]\n\n"
-        except Exception:
-            yield "data: [ERROR]\n\n"
-
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                max_output_tokens=MAX_TOKENS,
+            ),
+        )
+    text = response.text or ""
+    return JSONResponse({"text": text})
