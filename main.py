@@ -15,10 +15,8 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
 
 ZONES = [
@@ -121,6 +119,10 @@ def parse_order(req: ParseRequest):
         "sender":       grab(tail, r'sender\s*name\s*[:\-\t]+\s*(.+)') or clean(lines[0]),
         "sender_phone": find_phone(tail),
     }
+
+@app.options("/chat")
+async def chat_options():
+    return {}
 
 app.include_router(chat_router)
 
